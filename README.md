@@ -157,6 +157,8 @@ python3 src/main.py ctf "http://challenge-xxx.sandbox.ctfhub.com:10800/" --provi
 
 #### 支持的 CTF 类型
 
+当前仅支持 **Web 题型**：
+
 - SQL 注入
 - XSS 跨站脚本
 - 文件包含漏洞
@@ -165,6 +167,9 @@ python3 src/main.py ctf "http://challenge-xxx.sandbox.ctfhub.com:10800/" --provi
 - 代码执行
 - 加密解密
 - 其他 Web 漏洞
+
+> **注意**：后续将补充 Pwn、Reverse 等非 Web 类型题目。
+
 
 ### 4. tools - 列出可用工具
 
