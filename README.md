@@ -61,12 +61,9 @@ python3 src/main.py run [OPTIONS] [PROMPT]
 
 #### 可用 Provider
 
-- `openai` - OpenAI
-- `deepseek` - DeepSeek
-- `openrouter` - OpenRouter
-- `anthropic` - Anthropic
-- `google` - Google
-- `local` - 本地模型
+- `deepseek` - DeepSeek（已测试，推荐使用）
+
+> **注意**：当前仅测试了 DeepSeek。代码中虽保留了其他 Provider（openai、openrouter、anthropic、google、local）的接口，但未经测试，不保证可用。
 
 #### 示例
 
@@ -222,17 +219,13 @@ python3 src/main.py tools
 
 ## 高级用法
 
-### 指定不同的 LLM Provider
+### 指定 LLM Provider
+
+当前仅推荐使用 DeepSeek：
 
 ```bash
-# 使用 OpenAI
-python3 src/main.py run --provider openai --model gpt-4o
-
-# 使用 Anthropic
-python3 src/main.py run --provider anthropic --model claude-3-sonnet
-
-# 使用 Google
-python3 src/main.py run --provider google --model gemini-pro
+# 使用 DeepSeek
+python3 src/main.py run --provider deepseek --model deepseek-v4-flash
 ```
 
 ### 批量扫描
@@ -287,7 +280,7 @@ pip install -r requirements.txt
 
 ```bash
 # 检查 Provider 是否正确
-# 可用值: openai, openrouter, deepseek, anthropic, google, local
+# 当前支持: deepseek
 python3 src/main.py run --provider deepseek
 ```
 
