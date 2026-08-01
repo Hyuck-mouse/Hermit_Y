@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+.env
+.env.local
+.env.*.local
+logs/
+*.log
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# 第三方工具（通过 setup.sh 下载，不提交到仓库）
+thirdparty/
+src/thirdparty/
+flask-session-cookie-manager-master.zip
+ysoserial*.jar
