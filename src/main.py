@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 """
 # 退出当前 venv       
 deactivate
-source /opt/miniconda3/bin/activate pentest-agent
+source /opt/miniconda3/bin/activate hermit-y
 python src/main.py run
 """
 import typer

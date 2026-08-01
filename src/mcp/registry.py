@@ -9,7 +9,7 @@ class MCPRegistry:
         self.tools: Dict[str, Dict[str, Any]] = {}
         # 固定服务元信息，客户端调用/info接口时返回
         self.server_info = {
-            "name": "Pentest Agent MCP Server",
+            "name": "Hermit_Y MCP Server",
             "version": "0.1.0",
             "description": "AI-powered penetration testing MCP server"
         }

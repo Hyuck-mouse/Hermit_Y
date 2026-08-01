@@ -1,8 +1,8 @@
-# AI Pentest Agent - CLI 使用指南
+# Hermit_Y - CLI 使用指南
 
 ## 项目简介
 
-AI Pentest Agent 是一个基于 LLM 的自动化渗透测试工具，支持多种安全测试场景，包括漏洞扫描、CTF 解题等。
+Hermit_Y 是一个基于 LLM 的自动化渗透测试工具，支持多种安全测试场景，包括漏洞扫描、CTF 解题等。
 
 ## 快速开始
 
@@ -15,8 +15,8 @@ AI Pentest Agent 是一个基于 LLM 的自动化渗透测试工具，支持多�
 
 ```bash
 # 1. 创建并激活 conda 环境
-conda create -n pentest-agent python=3.11 -y
-conda activate pentest-agent
+conda create -n hermit-y python=3.11 -y
+conda activate hermit-y
 
 # 2. 安装依赖
 pip install -r requirements.txt
@@ -277,7 +277,7 @@ make clean
 
 ```bash
 # 确保在正确的环境中安装依赖
-conda activate pentest-agent
+conda activate hermit-y
 pip install -r requirements.txt
 ```
 
@@ -306,7 +306,7 @@ cat .env | grep API_KEY
 ## 项目结构
 
 ```
-pentest-agent/
+Hermit_Y/
 ├── src/
 │   ├── main.py              # CLI 入口
 │   ├── agent/               # Agent 核心模块
@@ -337,7 +337,7 @@ pentest-agent/
 
 ## 第三方工具说明
 
-本项目**不包含**任何第三方工具的源码或二进制文件。所有第三方工具均由 `setup.sh` 脚本从官方仓库自动下载到 `src/thirdparty/` 目录（该目录已被 `.gitignore` 排除，不会上传至仓库）。
+本项目**不包含**任何第三方工具的源码或二进制文件。所有第三方工具均由 `setup.sh` 脚本从官方仓库自动下载到 `src/thirdparty/` 目录。
 
 使用者需自行下载并遵守各工具的许可证协议：
 

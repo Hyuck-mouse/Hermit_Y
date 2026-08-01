@@ -24,7 +24,7 @@ def _clean_old_logs(log_dir: str, max_days: int = 90):
                 pass
     
     if deleted_count > 0:
-        logger = logging.getLogger("pentest_agent")
+        logger = logging.getLogger("Hermit_Y")
         logger.info(f"已清理 {deleted_count} 个超过 {max_days} 天的旧日志文件")
 
 
@@ -59,8 +59,8 @@ def setup_logging(mode: str = "run", max_log_days: int = 90) -> logging.Logger:
     root_logger.addHandler(console_handler)
     
     root_logger.info(f"日志系统已初始化，日志文件: {log_filepath}")
-    return logging.getLogger("pentest_agent")
+    return logging.getLogger("Hermit_Y")
 
 
-def get_logger(name: str = "pentest_agent") -> logging.Logger:
+def get_logger(name: str = "Hermit_Y") -> logging.Logger:
     return logging.getLogger(name)
