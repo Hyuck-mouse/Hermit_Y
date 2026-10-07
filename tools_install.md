@@ -9,6 +9,7 @@
 - [fenjing](#fenjing)
 - [ysoserial](#ysoserial)
 - [flask-session-cookie-manager](#flask-session-cookie-manager)
+- [pwntools](#pwntools)
 
 ---
 
@@ -252,6 +253,74 @@ flask-session-cookie-manager 使用 MIT 许可证，详见: [https://github.com/
 
 ---
 
+## pwntools
+
+**用途**: PWN二进制漏洞利用框架（CTF PWN题核心工具）
+
+### 安装方式
+
+pwntools 是 Python 库，通过 pip 安装：
+
+```bash
+pip install pwntools
+```
+
+### 系统依赖
+
+**macOS**:
+
+```bash
+brew install libffi openssl
+# 如果需要汇编支持：
+brew install binutils
+```
+
+**Ubuntu/Debian**:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-dev libffi-dev libssl-dev binutils
+```
+
+**CentOS/RHEL**:
+
+```bash
+sudo yum install -y python3-pip python3-devel libffi-devel openssl-devel binutils
+```
+
+### 验证安装
+
+```bash
+python3 -c "from pwn import *; print('pwntools version:', __version__)"
+```
+
+### 使用说明
+
+pwntools 是 CTF PWN 题目最常用的漏洞利用框架，支持 ELF 分析、ROP、shellcode、远程连接等。
+
+**Agent工具调用**（本项目封装的 PWN 工具）:
+
+| 工具函数 | 用途 |
+|---------|------|
+| `pwn_checksec(binary_path)` | 检查二进制保护机制(NX/PIE/Canary/RELRO) |
+| `pwn_file_info(binary_path)` | 获取文件类型、架构、关键strings |
+| `pwn_disassemble(binary_path, function_name)` | 反汇编指定函数 |
+| `pwn_pattern_create(length)` | 生成循环模式用于溢出偏移计算 |
+| `pwn_pattern_offset(value)` | 计算偏移量 |
+| `pwn_rop_gadgets(binary_path)` | 搜索ROP gadgets |
+| `pwn_rop_chain(binary_path, func_name, args)` | 构建ROP链 |
+| `pwn_remote_exploit(host, port, payload)` | 远程发送payload |
+| `pwn_remote_interact(host, port, commands)` | 交互式远程连接 |
+| `pwn_shellcode_generate(arch, shellcode_type)` | 生成shellcode |
+| `pwn_search_string(binary_path, search_string)` | 搜索字符串地址 |
+| `pwn_fmtstr_exploit(host, port, offset, payload_type)` | 格式化字符串漏洞利用 |
+
+### 许可证
+
+pwntools 使用 MIT 许可证，详见: [https://github.com/Gallopsled/pwntools/blob/dev/LICENSE](https://github.com/Gallopsled/pwntools/blob/dev/LICENSE)
+
+---
+
 ## 一键安装脚本
 
 为方便一键安装所有工具，可使用以下脚本：
@@ -294,6 +363,9 @@ if [ ! -d "flask-session-cookie-manager-master" ]; then
     rm -f flask-session-cookie-manager-master.zip
 fi
 pip install flask itsdangerous
+
+echo "=== 安装 pwntools ==="
+pip install pwntools
 
 echo "所有工具安装完成！"
 ```

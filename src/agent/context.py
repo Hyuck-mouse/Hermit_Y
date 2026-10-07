@@ -1,5 +1,8 @@
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+import json
+import os
+import hashlib
 
 
 class ContextManager:
@@ -54,3 +57,32 @@ class ContextManager:
     def from_dict(self, data: Dict[str, Any]):
         self.context = data.get("context", {})
         self.history = data.get("history", [])
+
+    def save_to_file(self, filepath: str) -> bool:
+        """保存当前会话到文件"""
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"保存会话失败: {e}")
+            return False
+
+    def load_from_file(self, filepath: str) -> bool:
+        """从文件加载会话"""
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.from_dict(data)
+            return True
+        except Exception as e:
+            print(f"加载会话失败: {e}")
+            return False
+
+    @staticmethod
+    def get_session_filepath(url: str) -> str:
+        """根据URL生成会话文件路径"""
+        # 用URL的MD5哈希作为文件名，避免特殊字符问题
+        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
+        return os.path.join("sessions", f"ctf_{url_hash}.json")

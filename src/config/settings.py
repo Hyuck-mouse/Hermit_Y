@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     base_url: Optional[str] = None
     default_model: str = "gpt-4o"
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     max_iterations: int = 50
     
     nmap_timeout: int = 60
