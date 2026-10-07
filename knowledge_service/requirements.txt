@@ -1,0 +1,13 @@
+# 运行环境建议: Python 3.11 / 3.12 / 3.13
+# (chromadb / torch 对 3.14 支持尚不完善;Agent 主项目的 venv 是 3.14,请勿共用)
+fastapi>=0.110
+uvicorn>=0.29
+chromadb>=0.5.0
+sentence-transformers>=2.7.0
+httpx>=0.27
+pypdf>=4.0.0
+python-docx>=1.1.0
+langchain-text-splitters>=0.2.0
+# 可选压缩格式支持(缺失时对应格式自动跳过并告警)
+py7zr>=0.21.0      # .7z
+rarfile>=4.1       # .rar(另需系统安装 unrar 或 bsdtar: brew install unrar)
