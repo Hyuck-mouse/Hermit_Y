@@ -9,6 +9,7 @@ venv/
 .env.local
 .env.*.local
 logs/
+sessions/
 *.log
 *.egg-info/
 dist/
@@ -25,3 +26,14 @@ thirdparty/
 src/thirdparty/
 flask-session-cookie-manager-master.zip
 ysoserial*.jar
+
+# 知识服务层数据(向量库/解压产物/清单),不上传 GitHub
+knowledge_service/data/
+agent_service/data/
+
+# 前端依赖与构建产物
+node_modules/
+*.tsbuildinfo
+
+# 备份文件
+*.bak
